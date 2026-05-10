@@ -36,7 +36,6 @@ const Login = () => {
   const handleChange = (e) => {
     const { name, value } = e.target;
     setForm(f => ({ ...f, [name]: value }));
-    // Clear error when user types
     if (errors[name]) setErrors(e => ({ ...e, [name]: '' }));
   };
 
@@ -60,22 +59,13 @@ const Login = () => {
     }
   };
 
-  const fillDemo = (role) => {
-    const demos = {
-      student: { email: 'student@futurebridge.com', password: 'student123' },
-      teacher: { email: 'teacher@futurebridge.com', password: 'teacher123' },
-      admin: { email: 'admin@futurebridge.com', password: 'admin123' },
-    };
-    setForm(demos[role]);
-    setErrors({});
-  };
-
   return (
     <div className="min-h-screen bg-gradient-to-br from-gray-950 via-blue-950 to-violet-950 flex items-center justify-center p-4">
       {/* Background orbs */}
       <div className="fixed inset-0 overflow-hidden pointer-events-none">
         <div className="absolute top-1/4 left-1/4 w-96 h-96 bg-blue-600/20 rounded-full blur-3xl animate-float" />
-        <div className="absolute bottom-1/4 right-1/4 w-96 h-96 bg-violet-600/20 rounded-full blur-3xl animate-float" style={{ animationDelay: '1.5s' }} />
+        <div className="absolute bottom-1/4 right-1/4 w-96 h-96 bg-violet-600/20 rounded-full blur-3xl animate-float"
+          style={{ animationDelay: '1.5s' }} />
       </div>
 
       <div className="relative w-full max-w-md">
@@ -89,23 +79,13 @@ const Login = () => {
         </div>
 
         {/* Card */}
-        <div className="bg-white/10 backdrop-blur-xl border border-white/20 rounded-3xl p-8 shadow-2xl animate-slide-up" style={{ animationDelay: '0.1s' }}>
+        <div className="bg-white/10 backdrop-blur-xl border border-white/20 rounded-3xl p-8 shadow-2xl animate-slide-up"
+          style={{ animationDelay: '0.1s' }}>
+
           <h2 className="text-xl font-semibold text-white mb-6">Welcome back 👋</h2>
 
-          {/* Demo buttons */}
-          <div className="mb-4">
-            <p className="text-xs text-white/50 text-center mb-2">Quick fill demo credentials</p>
-            <div className="flex gap-2">
-              {['student', 'teacher', 'admin'].map((role) => (
-                <button key={role} onClick={() => fillDemo(role)}
-                  className="flex-1 py-1.5 text-xs font-medium rounded-lg bg-white/10 text-white/80 hover:bg-white/20 transition-colors capitalize border border-white/10">
-                  {role}
-                </button>
-              ))}
-            </div>
-          </div>
-
           <form onSubmit={handleSubmit} className="space-y-4" noValidate>
+
             {/* Email */}
             <div>
               <label className="block text-sm font-medium text-white/80 mb-1.5">
@@ -151,8 +131,11 @@ const Login = () => {
                     errors.password ? 'border-red-400/60' : 'border-white/20'
                   }`}
                 />
-                <button type="button" onClick={() => setShowPassword(s => !s)}
-                  className="absolute right-3 top-1/2 -translate-y-1/2 text-white/50 hover:text-white/80">
+                <button
+                  type="button"
+                  onClick={() => setShowPassword(s => !s)}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-white/50 hover:text-white/80"
+                >
                   {showPassword ? <EyeOff size={16} /> : <Eye size={16} />}
                 </button>
               </div>
@@ -164,12 +147,16 @@ const Login = () => {
               )}
             </div>
 
-            <button type="submit" disabled={loading}
-              className="w-full py-3 bg-gradient-to-r from-blue-500 to-violet-600 text-white font-semibold rounded-xl hover:from-blue-600 hover:to-violet-700 transition-all duration-200 flex items-center justify-center gap-2 disabled:opacity-60 shadow-glow-blue mt-2">
+            {/* Submit */}
+            <button
+              type="submit"
+              disabled={loading}
+              className="w-full py-3 bg-gradient-to-r from-blue-500 to-violet-600 text-white font-semibold rounded-xl hover:from-blue-600 hover:to-violet-700 transition-all duration-200 flex items-center justify-center gap-2 disabled:opacity-60 shadow-glow-blue mt-2"
+            >
               {loading ? (
                 <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
               ) : (
-                <><Zap size={16} />Sign In</>
+                <><Zap size={16} /> Sign In</>
               )}
             </button>
           </form>
