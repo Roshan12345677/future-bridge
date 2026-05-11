@@ -1,99 +1,138 @@
 /**
- * AI Controller
- * Handles AI Interview Coach, Resume Generator, Cover Letter Generator
- * Uses Google Gemini 2.0 Flash API
+ * AI Controller - Fixed for Production
+ * Uses Gemini 2.5 Flash with proper error handling
  */
 
-const { asyncHandler, AppError } = require('../middleware/error');
+const { asyncHandler } = require('../middleware/error');
 
 // ── Gemini API Call ──────────────────────────────────────────────────
 const callGemini = async (prompt) => {
   const apiKey = process.env.GEMINI_API_KEY;
 
-  if (!apiKey || apiKey === 'your_gemini_api_key_here' || apiKey.trim() === '') {
-    console.log('⚠️  No Gemini API key found, using demo mode');
+  // No API key - use demo mode
+  if (!apiKey || apiKey.trim() === '' || apiKey === 'your_gemini_key_here') {
+    console.log('⚠️  No Gemini API key - using demo mode');
     return getMockResponse(prompt);
   }
 
-  const model = 'gemini-2.5-flash';
+  // Try models in order
+  const models = [
+    'gemini-2.5-flash',
+    'gemini-2.0-flash',
+    'gemini-2.0-flash-lite',
+    'gemini-pro',
+  ];
 
-  try {
-    console.log(`📡 Calling Gemini API with model: ${model}`);
+  for (const model of models) {
+    try {
+      console.log(`📡 Trying Gemini model: ${model}`);
 
-    const response = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`,
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          contents: [{ parts: [{ text: prompt }] }],
-          generationConfig: {
-            temperature: 0.7,
-            maxOutputTokens: 2048,
-          },
-        }),
+      const response = await fetch(
+        `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            contents: [{ parts: [{ text: prompt }] }],
+            generationConfig: {
+              temperature: 0.7,
+              maxOutputTokens: 2048,
+            },
+          }),
+        }
+      );
+
+      const data = await response.json();
+
+      if (data.error) {
+        const errMsg = data.error.message || '';
+        console.log(`⚠️  Model ${model} error: ${errMsg}`);
+
+        // Quota exceeded - fall back to demo mode immediately
+        if (errMsg.includes('quota') || errMsg.includes('QUOTA') ||
+            errMsg.includes('RESOURCE_EXHAUSTED') || data.error.code === 429) {
+          console.log('⚠️  Quota exceeded - using demo mode');
+          return getMockResponse(prompt);
+        }
+
+        // Model not found - try next model
+        if (errMsg.includes('not found') || errMsg.includes('404')) {
+          continue;
+        }
+
+        // API key invalid
+        if (errMsg.includes('API_KEY_INVALID') || data.error.code === 400) {
+          console.log('❌ Invalid API key - using demo mode');
+          return getMockResponse(prompt);
+        }
+
+        continue;
       }
-    );
 
-    const data = await response.json();
-
-    if (data.error) {
-      console.error('❌ Gemini API Error:', data.error.message);
-      // If quota exceeded, fall back to demo mode gracefully
-      if (data.error.status === 'RESOURCE_EXHAUSTED' || 
-          data.error.message.includes('quota') ||
-          data.error.message.includes('Quota')) {
-        console.log('⚠️  Quota exceeded - switching to demo mode');
-        return getMockResponse(prompt);
+      const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
+      if (text) {
+        console.log(`✅ Gemini ${model} responded successfully`);
+        return text;
       }
-      throw new Error(data.error.message);
+
+    } catch (err) {
+      console.log(`⚠️  Model ${model} fetch error: ${err.message}`);
+      continue;
     }
-
-    const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
-    if (!text) throw new Error('Empty response from Gemini');
-
-    console.log('✅ Gemini responded successfully');
-    return text;
-
-  } catch (err) {
-    console.error('❌ Gemini call failed:', err.message);
-    throw err;
   }
+
+  // All models failed - use demo mode
+  console.log('⚠️  All models failed - using demo mode');
+  return getMockResponse(prompt);
 };
 
-// ── Mock responses for demo mode (no API key) ────────────────────────
+// ── Demo responses ───────────────────────────────────────────────────
 const getMockResponse = (prompt) => {
-  if (prompt.includes('interview question') || prompt.includes('interviewer')) {
-    return `**Interview Question:** Explain the difference between Stack and Queue data structures.
+  const p = prompt.toLowerCase();
+
+  if (p.includes('interview') || p.includes('interviewer')) {
+    return `## Interview Question: Explain the difference between Array and Linked List
 
 **What the interviewer is looking for:**
-- Understanding of LIFO vs FIFO principles
-- Real-world use cases for each
-- Time complexity of operations
+- Understanding of memory allocation
+- Time complexity knowledge
+- Real-world use cases
 
 **Key Points to Cover:**
-1. Stack uses LIFO (Last In First Out) — like a stack of plates
-2. Queue uses FIFO (First In First Out) — like a queue at a ticket counter
-3. Stack operations: push(), pop(), peek() — all O(1)
-4. Queue operations: enqueue(), dequeue() — all O(1)
-5. Stack use cases: function call stack, undo operations, browser history
-6. Queue use cases: CPU scheduling, print spooler, BFS traversal
+
+**Array:**
+- Fixed size, contiguous memory
+- O(1) random access by index
+- O(n) insertion/deletion in middle
+- Cache friendly
+
+**Linked List:**
+- Dynamic size, non-contiguous memory
+- O(n) access by index
+- O(1) insertion/deletion at head
+- Extra memory for pointers
+
+**When to use Array:** When you need random access and size is known
+
+**When to use Linked List:** When frequent insertion/deletion needed
 
 **Time Estimate:** 5-7 minutes
 
-*Note: This is a demo response. Add your Gemini API key for real AI responses.*`;
+---
+*Note: AI is in demo mode. Add a valid Gemini API key for personalized responses.*`;
   }
 
-  if (prompt.includes('resume')) {
+  if (p.includes('resume')) {
     return `# Professional Resume
 
-## Your Name
-📧 email@example.com | 📱 +91-XXXXXXXXXX | 🔗 linkedin.com/in/yourname | 💻 github.com/yourusername
+## John Doe
+📧 john@example.com | 📱 +91-9876543210
+🔗 linkedin.com/in/johndoe | 💻 github.com/johndoe
 
 ---
 
 ## PROFESSIONAL SUMMARY
-Results-driven Software Engineer with expertise in full-stack development. Proven track record of delivering scalable solutions.
+Results-driven Software Engineer with 2+ years of experience in full-stack development. Expertise in React.js, Node.js, and MongoDB. Passionate about building scalable web applications.
 
 ---
 
@@ -102,252 +141,218 @@ Results-driven Software Engineer with expertise in full-stack development. Prove
 **Frontend:** React.js, HTML5, CSS3, Tailwind CSS
 **Backend:** Node.js, Express.js, REST APIs
 **Database:** MongoDB, MySQL, PostgreSQL
-**Tools:** Git, Docker, AWS, VS Code
+**Tools:** Git, Docker, AWS, VS Code, Postman
 
 ---
 
 ## EDUCATION
-**B.Tech in Computer Science** | SSBT College | 2020-2024
-- CGPA: 8.5/10
+**B.Tech - Computer Engineering**
+SSBT College of Engineering | 2020-2024 | CGPA: 8.5/10
+
+---
+
+## EXPERIENCE
+**Software Developer Intern | TechCorp Pvt Ltd**
+Jun 2023 - Aug 2023
+- Built RESTful APIs serving 10,000+ daily requests using Node.js
+- Reduced database query time by 40% through optimization
+- Developed React components improving UI performance by 30%
 
 ---
 
 ## PROJECTS
-**Smart Education System** | React, Node.js, MongoDB
-- Built full-stack platform serving 500+ students
-- Implemented real-time chat using Socket.io
+**Future Bridge - Education Platform**
+React.js, Node.js, MongoDB, Socket.io
+- Full-stack platform for 500+ engineering students
+- AI-powered interview coach and resume generator
+- Real-time chat using Socket.io
 
-*Note: This is a demo response. Add your Gemini API key for personalized resumes.*`;
+**E-Commerce Website**
+MERN Stack
+- Complete shopping platform with payment integration
+- Admin dashboard with analytics
+
+---
+
+## ACHIEVEMENTS
+- Solved 300+ problems on LeetCode (Rating: 1900+)
+- Winner - Smart India Hackathon 2023
+- 5-star rating on HackerRank in Problem Solving
+
+---
+*Note: AI is in demo mode. Add Gemini API key for personalized resume.*`;
   }
 
-  if (prompt.includes('cover letter')) {
+  if (p.includes('cover letter')) {
     return `Dear Hiring Manager,
 
-I am writing to express my strong interest in the Software Engineer role at your company.
+I am writing to express my enthusiastic interest in the Software Engineer position at your esteemed organization. As a Computer Engineering graduate from SSBT College with hands-on experience in full-stack development, I am excited about the opportunity to contribute to your team.
 
-With my background in full-stack development and passion for building impactful solutions, I am confident in my ability to contribute meaningfully to your team.
+During my academic journey and internship experience, I have developed strong proficiency in React.js, Node.js, and MongoDB. I successfully built and deployed a smart education platform serving 500+ students, which involved implementing real-time features using Socket.io, AI integrations with Google Gemini, and a comprehensive REST API backend.
 
-I would welcome the opportunity to discuss how my skills can contribute to your team's success.
+What particularly excites me about your organization is your commitment to innovation and technology excellence. I am confident that my technical skills, problem-solving abilities, and passion for creating impactful solutions align perfectly with your team's goals.
+
+I would welcome the opportunity to discuss how my background and enthusiasm can contribute to your organization's continued success. Thank you for considering my application.
 
 Sincerely,
-Your Name
+John Doe
+john@example.com | +91-9876543210
 
-*Note: This is a demo response. Add your Gemini API key for personalized cover letters.*`;
+---
+*Note: AI is in demo mode. Add Gemini API key for personalized cover letters.*`;
   }
 
-  if (prompt.includes('code review') || prompt.includes('Code:')) {
-    return `## Code Review
+  if (p.includes('code') || p.includes('review')) {
+    return `## Code Review Analysis
 
-**1. Correctness:** The code appears to solve the intended problem.
+### 1. ✅ Correctness
+The code appears to solve the intended problem correctly.
 
-**2. Time Complexity:** O(n) — single pass through the data structure.
+### 2. ⏱ Time Complexity
+**Current:** O(n²) - nested loops detected
+**Optimized:** O(n) - can use HashMap approach
 
-**3. Space Complexity:** O(1) — constant extra space used.
+### 3. 💾 Space Complexity
+**Current:** O(1) extra space
+**With optimization:** O(n) for HashMap
 
-**4. Code Quality:** 
-- Variable names are clear and descriptive
-- Logic flow is easy to follow
+### 4. 📝 Code Quality
+**Strengths:**
+- Clear variable naming
+- Readable logic flow
+- Proper indentation
 
-**5. Suggestions:**
-- Add input validation for edge cases
-- Consider adding comments for complex logic
-- Handle null/undefined inputs
+**Improvements needed:**
+- Add input validation
+- Handle edge cases (empty array, null input)
+- Add comments for complex logic
 
-**6. Alternative Approach:**
-Consider using built-in language methods which may be more optimized.
+### 5. 🔧 Suggested Improvements
+\`\`\`javascript
+// Add null check
+if (!arr || arr.length === 0) return [];
 
-*Note: This is a demo response. Add your Gemini API key for real code reviews.*`;
+// Use Map for O(n) solution
+const map = new Map();
+for (const num of arr) {
+  map.set(num, (map.get(num) || 0) + 1);
+}
+\`\`\`
+
+### 6. 🚀 Alternative Approach
+Consider using built-in methods like \`reduce()\` or \`Map\` for cleaner code.
+
+---
+*Note: AI is in demo mode. Add Gemini API key for real code reviews.*`;
   }
 
-  return 'AI response in demo mode. Please add your Gemini API key to backend/.env for real AI responses.';
+  return `Thank you for your question! I am BridgeBot, the AI assistant for Future Bridge.
+
+I can help you with:
+- 🎯 Interview preparation and mock questions
+- 📄 Resume and cover letter generation  
+- 💻 Code review and optimization tips
+- 📚 Study guidance for engineering subjects
+- 💼 Career advice and job preparation
+
+Currently running in demo mode. For personalized AI responses powered by Google Gemini, please ensure a valid API key is configured.
+
+How can I assist you today?`;
 };
 
-// ── Controllers ──────────────────────────────────────────────────────
+// ── Route Handlers ───────────────────────────────────────────────────
 
-/**
- * @desc    Generate interview question with AI feedback
- * @route   POST /api/ai/interview
- * @access  Private
- */
 const generateInterviewQuestion = asyncHandler(async (req, res) => {
   const { topic, difficulty, userAnswer, role: jobRole } = req.body;
 
   let prompt;
-
   if (userAnswer) {
-    prompt = `You are an expert technical interviewer. 
-The candidate was asked about: ${topic} (${difficulty} level) for a ${jobRole || 'Software Developer'} role.
-Their answer was: "${userAnswer}"
+    prompt = `You are an expert technical interviewer.
+Topic: ${topic} (${difficulty} level) for ${jobRole || 'Software Developer'} role.
+Candidate answer: "${userAnswer}"
 
-Please provide:
+Evaluate and provide:
 1. Score out of 10
-2. What was good about the answer
-3. What could be improved  
-4. A model answer
-5. Follow-up question
-
-Format your response clearly with these sections.`;
+2. Strengths of the answer
+3. Areas for improvement
+4. Model answer
+5. Follow-up question`;
   } else {
-    prompt = `You are an expert technical interviewer for ${jobRole || 'Software Developer'} positions.
-Generate a ${difficulty || 'medium'} level interview question about: ${topic || 'Data Structures and Algorithms'}.
+    prompt = `You are an expert technical interviewer for ${jobRole || 'Software Developer'}.
+Generate a ${difficulty || 'medium'} level question about: ${topic || 'Data Structures'}.
 
 Include:
 1. The interview question
-2. What the interviewer is looking for
-3. Key points to cover in a good answer
-4. Time estimate for answering
-
-Make it realistic and commonly asked in top tech companies.`;
+2. What interviewer looks for
+3. Key points for a good answer
+4. Time estimate`;
   }
 
-  try {
-    const response = await callGemini(prompt);
-    res.json({ success: true, response });
-  } catch (error) {
-    console.error('Interview generation error:', error.message);
-    res.status(500).json({
-      success: false,
-      message: `AI Error: ${error.message}. Please try again.`,
-    });
-  }
+  const response = await callGemini(prompt);
+  res.json({ success: true, response });
 });
 
-/**
- * @desc    Generate resume from user data
- * @route   POST /api/ai/resume
- * @access  Private
- */
 const generateResume = asyncHandler(async (req, res) => {
   const { personalInfo, education, experience, skills, projects, targetRole } = req.body;
 
-  const prompt = `You are a professional resume writer. Create a clean, ATS-optimized resume for:
-
+  const prompt = `Create a professional ATS-optimized resume in markdown for:
 Name: ${personalInfo?.name || 'Candidate'}
-Target Role: ${targetRole || 'Software Engineer'}
+Role: ${targetRole || 'Software Engineer'}
 Email: ${personalInfo?.email || ''}
 Phone: ${personalInfo?.phone || ''}
-LinkedIn: ${personalInfo?.linkedin || ''}
-GitHub: ${personalInfo?.github || ''}
-
+Skills: ${JSON.stringify(skills || [])}
 Education: ${JSON.stringify(education || [])}
 Experience: ${JSON.stringify(experience || [])}
-Skills: ${JSON.stringify(skills || [])}
 Projects: ${JSON.stringify(projects || [])}
 
-Create a professional, well-structured resume in markdown format. Use action verbs, quantify achievements where possible, and tailor it for the target role. Include relevant sections and make it stand out.`;
+Make it professional with action verbs and quantified achievements.`;
 
-  try {
-    const response = await callGemini(prompt);
-    res.json({ success: true, resume: response });
-  } catch (error) {
-    console.error('Resume generation error:', error.message);
-    res.status(500).json({
-      success: false,
-      message: `AI Error: ${error.message}. Please try again.`,
-    });
-  }
+  const response = await callGemini(prompt);
+  res.json({ success: true, resume: response });
 });
 
-/**
- * @desc    Generate cover letter
- * @route   POST /api/ai/cover-letter
- * @access  Private
- */
 const generateCoverLetter = asyncHandler(async (req, res) => {
   const { personalInfo, jobTitle, companyName, jobDescription, userBackground } = req.body;
 
-  const prompt = `You are an expert career coach. Write a compelling, personalized cover letter for:
-
+  const prompt = `Write a compelling cover letter for:
 Applicant: ${personalInfo?.name || 'Applicant'}
-Job Title: ${jobTitle || 'Software Engineer'}
-Company: ${companyName || 'Company'}
+Job: ${jobTitle || 'Software Engineer'} at ${companyName || 'Company'}
 Job Description: ${jobDescription || 'Software development role'}
-Applicant Background: ${userBackground || 'Software developer with strong technical skills'}
+Background: ${userBackground || 'Software developer'}
 
-Write a professional cover letter that:
-1. Opens with a strong hook
-2. Connects the applicant's experience to the role
-3. Shows knowledge of the company
-4. Has a compelling call-to-action closing
-5. Is 3-4 paragraphs, professional tone
+Write 3-4 paragraphs: strong opening, experience match, company interest, call-to-action.`;
 
-Make it genuine, specific, and persuasive.`;
-
-  try {
-    const response = await callGemini(prompt);
-    res.json({ success: true, coverLetter: response });
-  } catch (error) {
-    console.error('Cover letter error:', error.message);
-    res.status(500).json({
-      success: false,
-      message: `AI Error: ${error.message}. Please try again.`,
-    });
-  }
+  const response = await callGemini(prompt);
+  res.json({ success: true, coverLetter: response });
 });
 
-/**
- * @desc    AI Code Review
- * @route   POST /api/ai/code-review
- * @access  Private
- */
 const codeReview = asyncHandler(async (req, res) => {
   const { code, language, problemTitle } = req.body;
 
-  const prompt = `You are a senior software engineer doing a code review.
-
+  const prompt = `Senior engineer code review:
 Problem: ${problemTitle || 'Programming problem'}
-Language: ${language || 'Unknown'}
+Language: ${language}
 Code:
 \`\`\`${language}
 ${code}
 \`\`\`
 
-Provide a detailed code review covering:
-1. **Correctness** - Does the code solve the problem?
-2. **Time Complexity** - Big O analysis
-3. **Space Complexity** - Memory usage
-4. **Code Quality** - Readability, naming, style
-5. **Improvements** - Specific suggestions with examples
-6. **Alternative Approach** - Better solution if applicable
+Review: correctness, time complexity, space complexity, code quality, improvements, alternative approach.`;
 
-Be constructive and educational.`;
-
-  try {
-    const response = await callGemini(prompt);
-    res.json({ success: true, review: response });
-  } catch (error) {
-    console.error('Code review error:', error.message);
-    res.status(500).json({
-      success: false,
-      message: `AI Error: ${error.message}. Please try again.`,
-    });
-  }
+  const response = await callGemini(prompt);
+  res.json({ success: true, review: response });
 });
 
-/**
- * @desc    AI Chat assistant
- * @route   POST /api/ai/chat
- * @access  Private
- */
 const aiChat = asyncHandler(async (req, res) => {
   const { message, context } = req.body;
 
-  const prompt = `You are an AI learning assistant for "Future Bridge", a smart education platform for engineering students.
-Context: ${context || 'Student asking a general question'}
-Student message: ${message}
+  const prompt = `You are BridgeBot, AI assistant for Future Bridge education platform.
+Context: ${context || 'Student question'}
+Message: ${message}
+Reply helpfully and concisely in educational tone.`;
 
-Respond helpfully, concisely, and in a friendly educational tone. If it's a technical question, provide clear explanations with examples. If it's about career advice, be specific and actionable.`;
-
-  try {
-    const response = await callGemini(prompt);
-    res.json({ success: true, response });
-  } catch (error) {
-    console.error('AI chat error:', error.message);
-    res.status(500).json({
-      success: false,
-      message: `AI Error: ${error.message}. Please try again.`,
-    });
-  }
+  const response = await callGemini(prompt);
+  res.json({ success: true, response });
 });
 
 module.exports = {
