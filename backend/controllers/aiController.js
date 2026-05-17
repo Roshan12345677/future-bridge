@@ -9,23 +9,26 @@ const { asyncHandler } = require('../middleware/error');
 const callGemini = async (prompt) => {
   const apiKey = process.env.GEMINI_API_KEY;
 
-  // No API key - use demo mode
+  console.log('=== Gemini Debug ===');
+  console.log('API Key exists:', !!apiKey);
+  console.log('API Key length:', apiKey?.length || 0);
+  console.log('API Key starts:', apiKey?.substring(0, 15) || 'MISSING');
+  console.log('===================');
+
   if (!apiKey || apiKey.trim() === '' || apiKey === 'your_gemini_key_here') {
-    console.log('⚠️  No Gemini API key - using demo mode');
+    console.log('⚠️  No valid API key found - demo mode');
     return getMockResponse(prompt);
   }
 
-  // Try models in order
   const models = [
     'gemini-2.5-flash',
     'gemini-2.0-flash',
     'gemini-2.0-flash-lite',
-    'gemini-pro',
   ];
 
   for (const model of models) {
     try {
-      console.log(`📡 Trying Gemini model: ${model}`);
+      console.log(`📡 Trying model: ${model}`);
 
       const response = await fetch(
         `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`,
@@ -43,26 +46,24 @@ const callGemini = async (prompt) => {
       );
 
       const data = await response.json();
+      console.log(`Model ${model} response status:`, response.status);
 
       if (data.error) {
-        const errMsg = data.error.message || '';
-        console.log(`⚠️  Model ${model} error: ${errMsg}`);
+        console.log(`❌ Model ${model} error:`, data.error.message);
+        console.log(`Error code:`, data.error.code);
+        console.log(`Error status:`, data.error.status);
 
-        // Quota exceeded - fall back to demo mode immediately
-        if (errMsg.includes('quota') || errMsg.includes('QUOTA') ||
-            errMsg.includes('RESOURCE_EXHAUSTED') || data.error.code === 429) {
-          console.log('⚠️  Quota exceeded - using demo mode');
+        if (data.error.message?.includes('quota') ||
+            data.error.message?.includes('QUOTA') ||
+            data.error.status === 'RESOURCE_EXHAUSTED' ||
+            data.error.code === 429) {
+          console.log('⚠️  Quota exceeded on this account');
           return getMockResponse(prompt);
         }
 
-        // Model not found - try next model
-        if (errMsg.includes('not found') || errMsg.includes('404')) {
-          continue;
-        }
-
-        // API key invalid
-        if (errMsg.includes('API_KEY_INVALID') || data.error.code === 400) {
-          console.log('❌ Invalid API key - using demo mode');
+        if (data.error.message?.includes('API_KEY_INVALID') ||
+            data.error.message?.includes('invalid')) {
+          console.log('❌ Invalid API key');
           return getMockResponse(prompt);
         }
 
@@ -71,18 +72,17 @@ const callGemini = async (prompt) => {
 
       const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
       if (text) {
-        console.log(`✅ Gemini ${model} responded successfully`);
+        console.log(`✅ SUCCESS with model: ${model}`);
         return text;
       }
 
     } catch (err) {
-      console.log(`⚠️  Model ${model} fetch error: ${err.message}`);
+      console.log(`❌ Fetch error for ${model}:`, err.message);
       continue;
     }
   }
 
-  // All models failed - use demo mode
-  console.log('⚠️  All models failed - using demo mode');
+  console.log('⚠️  All models failed - demo mode');
   return getMockResponse(prompt);
 };
 
