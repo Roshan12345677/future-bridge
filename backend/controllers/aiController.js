@@ -1,266 +1,348 @@
 /**
- * AI Controller - Fixed for Production
- * Uses Gemini 2.5 Flash with proper error handling
+ * AI Controller - Multi-Key Rotation System
+ * Automatically rotates between multiple Gemini API keys
+ * Falls back to demo mode only when ALL keys are exhausted
  */
 
 const { asyncHandler } = require('../middleware/error');
 
-// ── Gemini API Call ──────────────────────────────────────────────────
+// ── Key Rotation State ───────────────────────────────────────────────
+let currentKeyIndex = 0;
+const keyUsageCount = {};
+
+// Get all available API keys
+const getApiKeys = () => {
+  const keys = [
+    process.env.GEMINI_API_KEY_1,
+    process.env.GEMINI_API_KEY_2,
+    process.env.GEMINI_API_KEY_3,
+    process.env.GEMINI_API_KEY_4,
+    process.env.GEMINI_API_KEY_5,
+    // Fallback to single key if using old config
+    process.env.GEMINI_API_KEY,
+  ].filter(k => k && k.trim() !== '' && k !== 'your_gemini_key_here');
+
+  // Remove duplicates
+  return [...new Set(keys)];
+};
+
+// ── Gemini API Call With Key Rotation ───────────────────────────────
 const callGemini = async (prompt) => {
-  const apiKey = process.env.GEMINI_API_KEY;
+  const apiKeys = getApiKeys();
 
-  console.log('=== Gemini Debug ===');
-  console.log('API Key exists:', !!apiKey);
-  console.log('API Key length:', apiKey?.length || 0);
-  console.log('API Key starts:', apiKey?.substring(0, 15) || 'MISSING');
-  console.log('===================');
-
-  if (!apiKey || apiKey.trim() === '' || apiKey === 'your_gemini_key_here') {
-    console.log('⚠️  No valid API key found - demo mode');
+  if (apiKeys.length === 0) {
+    console.log('⚠️  No Gemini API keys configured - using demo mode');
     return getMockResponse(prompt);
   }
+
+  console.log(`🔑 Available API keys: ${apiKeys.length}`);
 
   const models = [
     'gemini-2.5-flash',
     'gemini-2.0-flash',
     'gemini-2.0-flash-lite',
+    'gemini-2.5-pro',
   ];
 
-  for (const model of models) {
-    try {
-      console.log(`📡 Trying model: ${model}`);
+  // Try each key
+  for (let keyAttempt = 0; keyAttempt < apiKeys.length; keyAttempt++) {
+    // Rotate to next key in round-robin fashion
+    const keyIndex = (currentKeyIndex + keyAttempt) % apiKeys.length;
+    const apiKey = apiKeys[keyIndex];
 
-      const response = await fetch(
-        `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`,
-        {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            contents: [{ parts: [{ text: prompt }] }],
-            generationConfig: {
-              temperature: 0.7,
-              maxOutputTokens: 2048,
-            },
-          }),
+    console.log(`🔑 Trying key ${keyIndex + 1} of ${apiKeys.length}`);
+
+    // Try each model with this key
+    for (const model of models) {
+      try {
+        const response = await fetch(
+          `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`,
+          {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              contents: [{ parts: [{ text: prompt }] }],
+              generationConfig: {
+                temperature: 0.7,
+                maxOutputTokens: 2048,
+              },
+            }),
+          }
+        );
+
+        const data = await response.json();
+
+        if (data.error) {
+          const errMsg = data.error.message || '';
+          const errCode = data.error.code;
+          const errStatus = data.error.status;
+
+          console.log(`⚠️  Key ${keyIndex + 1} / Model ${model}: ${errMsg}`);
+
+          // Quota exceeded for this key - try next key
+          if (
+            errStatus === 'RESOURCE_EXHAUSTED' ||
+            errCode === 429 ||
+            errMsg.toLowerCase().includes('quota') ||
+            errMsg.toLowerCase().includes('limit')
+          ) {
+            console.log(`🔄 Key ${keyIndex + 1} quota exceeded - rotating to next key`);
+            break; // Break model loop, try next key
+          }
+
+          // Model not found - try next model
+          if (errMsg.includes('not found') || errCode === 404) {
+            continue; // Try next model
+          }
+
+          // Invalid key - try next key
+          if (
+            errMsg.includes('API_KEY_INVALID') ||
+            errMsg.includes('invalid') ||
+            errCode === 400
+          ) {
+            console.log(`❌ Key ${keyIndex + 1} is invalid - trying next key`);
+            break; // Break model loop, try next key
+          }
+
+          continue; // Try next model
         }
-      );
 
-      const data = await response.json();
-      console.log(`Model ${model} response status:`, response.status);
+        const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
+        if (text) {
+          // Success - update current key index for next request (round-robin)
+          currentKeyIndex = (keyIndex + 1) % apiKeys.length;
+          console.log(`✅ Success! Key ${keyIndex + 1} / Model: ${model}`);
 
-      if (data.error) {
-        console.log(`❌ Model ${model} error:`, data.error.message);
-        console.log(`Error code:`, data.error.code);
-        console.log(`Error status:`, data.error.status);
+          // Track usage
+          keyUsageCount[keyIndex] = (keyUsageCount[keyIndex] || 0) + 1;
+          console.log(`📊 Key usage counts:`, keyUsageCount);
 
-        if (data.error.message?.includes('quota') ||
-            data.error.message?.includes('QUOTA') ||
-            data.error.status === 'RESOURCE_EXHAUSTED' ||
-            data.error.code === 429) {
-          console.log('⚠️  Quota exceeded on this account');
-          return getMockResponse(prompt);
+          return text;
         }
 
-        if (data.error.message?.includes('API_KEY_INVALID') ||
-            data.error.message?.includes('invalid')) {
-          console.log('❌ Invalid API key');
-          return getMockResponse(prompt);
-        }
-
+      } catch (err) {
+        console.log(`❌ Network error key ${keyIndex + 1} / ${model}: ${err.message}`);
         continue;
       }
-
-      const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
-      if (text) {
-        console.log(`✅ SUCCESS with model: ${model}`);
-        return text;
-      }
-
-    } catch (err) {
-      console.log(`❌ Fetch error for ${model}:`, err.message);
-      continue;
     }
   }
 
-  console.log('⚠️  All models failed - demo mode');
+  // All keys exhausted - use demo mode
+  console.log('⚠️  All API keys exhausted - switching to demo mode');
   return getMockResponse(prompt);
 };
 
-// ── Demo responses ───────────────────────────────────────────────────
+// ── Demo Responses ───────────────────────────────────────────────────
 const getMockResponse = (prompt) => {
   const p = prompt.toLowerCase();
 
   if (p.includes('interview') || p.includes('interviewer')) {
-    return `## Interview Question: Explain the difference between Array and Linked List
+    return `## 🎯 Interview Question: Explain the difference between Process and Thread
 
 **What the interviewer is looking for:**
-- Understanding of memory allocation
-- Time complexity knowledge
-- Real-world use cases
+- Understanding of OS concepts
+- Memory management knowledge
+- Practical use cases
 
-**Key Points to Cover:**
+**Key Points:**
 
-**Array:**
-- Fixed size, contiguous memory
-- O(1) random access by index
-- O(n) insertion/deletion in middle
-- Cache friendly
+**Process:**
+- Independent program in execution
+- Has its own memory space
+- More overhead to create
+- Communication via IPC (Inter-Process Communication)
+- Crash of one doesn't affect others
 
-**Linked List:**
-- Dynamic size, non-contiguous memory
-- O(n) access by index
-- O(1) insertion/deletion at head
-- Extra memory for pointers
+**Thread:**
+- Lightweight unit within a process
+- Shares memory with other threads
+- Less overhead to create
+- Communication via shared memory
+- Crash can affect entire process
 
-**When to use Array:** When you need random access and size is known
-
-**When to use Linked List:** When frequent insertion/deletion needed
+**Real-world example:**
+- Chrome browser: each tab = separate process (isolation)
+- Web server: each request = new thread (performance)
 
 **Time Estimate:** 5-7 minutes
 
 ---
-*Note: AI is in demo mode. Add a valid Gemini API key for personalized responses.*`;
+*💡 Demo mode — All API keys quota exceeded. Will restore automatically after 24 hours.*`;
   }
 
   if (p.includes('resume')) {
     return `# Professional Resume
 
-## John Doe
-📧 john@example.com | 📱 +91-9876543210
-🔗 linkedin.com/in/johndoe | 💻 github.com/johndoe
+## Your Name
+📧 email@gmail.com | 📱 +91-9876543210
+🔗 linkedin.com/in/yourname | 💻 github.com/yourname
+📍 Jalgaon, Maharashtra
 
 ---
 
 ## PROFESSIONAL SUMMARY
-Results-driven Software Engineer with 2+ years of experience in full-stack development. Expertise in React.js, Node.js, and MongoDB. Passionate about building scalable web applications.
+Motivated Computer Engineering graduate from SSBT College with strong foundation in full-stack development and competitive programming. Proven ability to build scalable web applications and solve complex algorithmic problems.
 
 ---
 
 ## TECHNICAL SKILLS
-**Languages:** JavaScript, Python, Java, C++
+**Languages:** C++, Java, Python, JavaScript
 **Frontend:** React.js, HTML5, CSS3, Tailwind CSS
-**Backend:** Node.js, Express.js, REST APIs
+**Backend:** Node.js, Express.js, REST APIs, Socket.io
 **Database:** MongoDB, MySQL, PostgreSQL
-**Tools:** Git, Docker, AWS, VS Code, Postman
+**Tools:** Git, GitHub, VS Code, Postman, Docker
+**Cloud:** AWS basics, MongoDB Atlas, Vercel, Render
 
 ---
 
 ## EDUCATION
 **B.Tech - Computer Engineering**
-SSBT College of Engineering | 2020-2024 | CGPA: 8.5/10
+SSBT College of Engineering & Technology, Jalgaon
+2020 - 2024 | CGPA: 8.7/10
 
----
-
-## EXPERIENCE
-**Software Developer Intern | TechCorp Pvt Ltd**
-Jun 2023 - Aug 2023
-- Built RESTful APIs serving 10,000+ daily requests using Node.js
-- Reduced database query time by 40% through optimization
-- Developed React components improving UI performance by 30%
+**Key Courses:** DSA, DBMS, OS, Computer Networks, Software Engineering
 
 ---
 
 ## PROJECTS
-**Future Bridge - Education Platform**
-React.js, Node.js, MongoDB, Socket.io
-- Full-stack platform for 500+ engineering students
-- AI-powered interview coach and resume generator
-- Real-time chat using Socket.io
+**Future Bridge - Smart Education Platform**
+*React.js, Node.js, MongoDB, Socket.io, Gemini AI*
+- Built full-stack education platform for 500+ engineering students
+- Integrated AI Interview Coach using Google Gemini API
+- Implemented real-time chat using Socket.io
+- Features: DSA tracker, code editor, attendance system, job portal
 
-**E-Commerce Website**
-MERN Stack
+**E-Commerce Platform**
+*MERN Stack, Redux, Stripe*
 - Complete shopping platform with payment integration
-- Admin dashboard with analytics
+- Admin dashboard with sales analytics
+- 99.9% uptime with optimized MongoDB queries
+
+---
+
+## EXPERIENCE
+**Web Developer Intern | TechStartup Pvt Ltd**
+June 2023 - August 2023
+- Developed 15+ React components reducing load time by 35%
+- Built RESTful APIs handling 50,000+ daily requests
+- Collaborated with 8-member agile development team
 
 ---
 
 ## ACHIEVEMENTS
-- Solved 300+ problems on LeetCode (Rating: 1900+)
-- Winner - Smart India Hackathon 2023
-- 5-star rating on HackerRank in Problem Solving
+- ⭐ Solved 400+ problems on LeetCode (Rating: 1950)
+- 🏆 Winner - Smart India Hackathon 2023 (Regional Level)
+- 🎖️ 5-star Gold Badge on HackerRank in Problem Solving
+- 📜 AWS Cloud Practitioner Certified
 
 ---
-*Note: AI is in demo mode. Add Gemini API key for personalized resume.*`;
+*💡 Demo mode - Add valid Gemini API keys for personalized resume generation.*`;
   }
 
   if (p.includes('cover letter')) {
-    return `Dear Hiring Manager,
+    return `[Your Name]
+[Your Email] | [Your Phone]
+[Date]
 
-I am writing to express my enthusiastic interest in the Software Engineer position at your esteemed organization. As a Computer Engineering graduate from SSBT College with hands-on experience in full-stack development, I am excited about the opportunity to contribute to your team.
+Dear Hiring Manager,
 
-During my academic journey and internship experience, I have developed strong proficiency in React.js, Node.js, and MongoDB. I successfully built and deployed a smart education platform serving 500+ students, which involved implementing real-time features using Socket.io, AI integrations with Google Gemini, and a comprehensive REST API backend.
+I am writing to express my strong interest in the Software Engineer position at [Company Name]. As a Computer Engineering graduate from SSBT College of Engineering with hands-on experience in full-stack development and AI integration, I am excited about the opportunity to contribute meaningfully to your team.
 
-What particularly excites me about your organization is your commitment to innovation and technology excellence. I am confident that my technical skills, problem-solving abilities, and passion for creating impactful solutions align perfectly with your team's goals.
+During my academic journey, I built Future Bridge — a comprehensive education platform serving 500+ engineering students. This project involved implementing real-time features with Socket.io, integrating Google Gemini AI for intelligent coaching, and building a scalable REST API backend with Node.js and MongoDB. This experience sharpened my ability to architect production-ready systems and work with modern cloud infrastructure.
 
-I would welcome the opportunity to discuss how my background and enthusiasm can contribute to your organization's continued success. Thank you for considering my application.
+What excites me most about [Company Name] is your commitment to [specific company value]. Your work on [specific product/project] aligns perfectly with my passion for building technology that creates real-world impact. I am confident that my technical skills in React.js, Node.js, and problem-solving mindset make me an excellent fit for your engineering team.
+
+I would welcome the opportunity to discuss how my background can contribute to [Company Name]'s continued growth. Thank you for considering my application.
 
 Sincerely,
-John Doe
-john@example.com | +91-9876543210
+[Your Name]
+[LinkedIn] | [GitHub] | [Portfolio]
 
 ---
-*Note: AI is in demo mode. Add Gemini API key for personalized cover letters.*`;
+*💡 Demo mode - Add valid Gemini API keys for personalized cover letters.*`;
   }
 
   if (p.includes('code') || p.includes('review')) {
-    return `## Code Review Analysis
+    return `## 🔍 AI Code Review
 
-### 1. ✅ Correctness
-The code appears to solve the intended problem correctly.
+### ✅ Correctness
+The code logic appears correct and handles the main use case.
 
-### 2. ⏱ Time Complexity
-**Current:** O(n²) - nested loops detected
-**Optimized:** O(n) - can use HashMap approach
+### ⏱ Time Complexity Analysis
+- **Current:** O(n²) due to nested iterations
+- **Optimized:** O(n) using HashMap/Set approach
+- **Recommendation:** Use a Map for O(1) lookups
 
-### 3. 💾 Space Complexity
-**Current:** O(1) extra space
-**With optimization:** O(n) for HashMap
+### 💾 Space Complexity
+- **Current:** O(1) extra space
+- **After optimization:** O(n) for the HashMap
 
-### 4. 📝 Code Quality
+### 📝 Code Quality Score: 7/10
+
 **Strengths:**
-- Clear variable naming
-- Readable logic flow
-- Proper indentation
+- ✅ Clean variable naming
+- ✅ Readable logic flow
+- ✅ Proper code structure
 
-**Improvements needed:**
-- Add input validation
-- Handle edge cases (empty array, null input)
-- Add comments for complex logic
+**Issues Found:**
+- ⚠️ Missing input validation (null/empty check)
+- ⚠️ No error handling for edge cases
+- ⚠️ Magic numbers without constants
+- ⚠️ Missing code comments
 
-### 5. 🔧 Suggested Improvements
+### 🔧 Suggested Improvements
+
 \`\`\`javascript
-// Add null check
-if (!arr || arr.length === 0) return [];
+// 1. Add input validation
+if (!input || input.length === 0) {
+  throw new Error('Input cannot be empty');
+}
 
-// Use Map for O(n) solution
-const map = new Map();
-for (const num of arr) {
-  map.set(num, (map.get(num) || 0) + 1);
+// 2. Use constants for magic numbers
+const MAX_SIZE = 1000;
+
+// 3. Optimized O(n) approach
+const seen = new Map();
+for (const item of input) {
+  if (seen.has(item)) return seen.get(item);
+  seen.set(item, currentIndex);
 }
 \`\`\`
 
-### 6. 🚀 Alternative Approach
-Consider using built-in methods like \`reduce()\` or \`Map\` for cleaner code.
+### 🚀 Alternative Approach
+Consider using built-in JavaScript methods like \`Array.reduce()\` or \`Map\` for cleaner, more idiomatic code.
+
+### 📚 Resources to Learn More
+- MDN Web Docs: Array methods
+- LeetCode: Hash Table problems
+- Big-O Cheat Sheet: bigocheatsheet.com
 
 ---
-*Note: AI is in demo mode. Add Gemini API key for real code reviews.*`;
+*💡 Demo mode - Add valid Gemini API keys for real-time code review.*`;
   }
 
-  return `Thank you for your question! I am BridgeBot, the AI assistant for Future Bridge.
+  return `## 👋 Hello! I'm BridgeBot
 
-I can help you with:
-- 🎯 Interview preparation and mock questions
-- 📄 Resume and cover letter generation  
-- 💻 Code review and optimization tips
-- 📚 Study guidance for engineering subjects
-- 💼 Career advice and job preparation
+I'm the AI assistant for Future Bridge Smart Education Platform.
 
-Currently running in demo mode. For personalized AI responses powered by Google Gemini, please ensure a valid API key is configured.
+**I can help you with:**
+- 🎯 Mock interview questions and feedback
+- 📄 Professional resume generation
+- ✉️ Personalized cover letters
+- 💻 Code review and optimization
+- 📚 Study guidance for engineering
 
-How can I assist you today?`;
+**Currently in Demo Mode**
+The AI is showing sample responses. For real personalized AI responses:
+1. Add valid Gemini API keys to the backend
+2. Each key provides 1500 free requests/day
+3. Multiple keys can be added for higher limits
+
+How can I help you today?`;
 };
 
-// ── Route Handlers ───────────────────────────────────────────────────
+// ── Controllers ──────────────────────────────────────────────────────
 
 const generateInterviewQuestion = asyncHandler(async (req, res) => {
   const { topic, difficulty, userAnswer, role: jobRole } = req.body;
@@ -271,21 +353,21 @@ const generateInterviewQuestion = asyncHandler(async (req, res) => {
 Topic: ${topic} (${difficulty} level) for ${jobRole || 'Software Developer'} role.
 Candidate answer: "${userAnswer}"
 
-Evaluate and provide:
+Evaluate with:
 1. Score out of 10
-2. Strengths of the answer
-3. Areas for improvement
+2. Strengths
+3. Areas to improve
 4. Model answer
 5. Follow-up question`;
   } else {
     prompt = `You are an expert technical interviewer for ${jobRole || 'Software Developer'}.
-Generate a ${difficulty || 'medium'} level question about: ${topic || 'Data Structures'}.
+Generate a ${difficulty || 'medium'} level interview question about: ${topic || 'Data Structures'}.
 
 Include:
-1. The interview question
+1. The question
 2. What interviewer looks for
 3. Key points for a good answer
-4. Time estimate`;
+4. Estimated answer time`;
   }
 
   const response = await callGemini(prompt);
@@ -295,17 +377,19 @@ Include:
 const generateResume = asyncHandler(async (req, res) => {
   const { personalInfo, education, experience, skills, projects, targetRole } = req.body;
 
-  const prompt = `Create a professional ATS-optimized resume in markdown for:
+  const prompt = `Create a professional ATS-optimized resume in markdown format for:
 Name: ${personalInfo?.name || 'Candidate'}
-Role: ${targetRole || 'Software Engineer'}
+Target Role: ${targetRole || 'Software Engineer'}
 Email: ${personalInfo?.email || ''}
 Phone: ${personalInfo?.phone || ''}
+LinkedIn: ${personalInfo?.linkedin || ''}
+GitHub: ${personalInfo?.github || ''}
 Skills: ${JSON.stringify(skills || [])}
 Education: ${JSON.stringify(education || [])}
 Experience: ${JSON.stringify(experience || [])}
 Projects: ${JSON.stringify(projects || [])}
 
-Make it professional with action verbs and quantified achievements.`;
+Make it professional with action verbs and quantified achievements. Include all standard resume sections.`;
 
   const response = await callGemini(prompt);
   res.json({ success: true, resume: response });
@@ -314,13 +398,15 @@ Make it professional with action verbs and quantified achievements.`;
 const generateCoverLetter = asyncHandler(async (req, res) => {
   const { personalInfo, jobTitle, companyName, jobDescription, userBackground } = req.body;
 
-  const prompt = `Write a compelling cover letter for:
+  const prompt = `Write a compelling professional cover letter for:
 Applicant: ${personalInfo?.name || 'Applicant'}
-Job: ${jobTitle || 'Software Engineer'} at ${companyName || 'Company'}
+Email: ${personalInfo?.email || ''}
+Job Title: ${jobTitle || 'Software Engineer'}
+Company: ${companyName || 'Company'}
 Job Description: ${jobDescription || 'Software development role'}
-Background: ${userBackground || 'Software developer'}
+Background: ${userBackground || 'Software developer with strong technical skills'}
 
-Write 3-4 paragraphs: strong opening, experience match, company interest, call-to-action.`;
+Write 3-4 paragraphs: strong opening hook, match experience to role, show company knowledge, strong call-to-action closing.`;
 
   const response = await callGemini(prompt);
   res.json({ success: true, coverLetter: response });
@@ -329,15 +415,21 @@ Write 3-4 paragraphs: strong opening, experience match, company interest, call-t
 const codeReview = asyncHandler(async (req, res) => {
   const { code, language, problemTitle } = req.body;
 
-  const prompt = `Senior engineer code review:
+  const prompt = `You are a senior software engineer doing a detailed code review.
 Problem: ${problemTitle || 'Programming problem'}
-Language: ${language}
+Language: ${language || 'Unknown'}
 Code:
 \`\`\`${language}
 ${code}
 \`\`\`
 
-Review: correctness, time complexity, space complexity, code quality, improvements, alternative approach.`;
+Provide review covering:
+1. Correctness - does it solve the problem?
+2. Time Complexity - Big O analysis
+3. Space Complexity
+4. Code Quality - readability, naming, style
+5. Specific improvements with code examples
+6. Alternative better approach if applicable`;
 
   const response = await callGemini(prompt);
   res.json({ success: true, review: response });
@@ -346,10 +438,11 @@ Review: correctness, time complexity, space complexity, code quality, improvemen
 const aiChat = asyncHandler(async (req, res) => {
   const { message, context } = req.body;
 
-  const prompt = `You are BridgeBot, AI assistant for Future Bridge education platform.
-Context: ${context || 'Student question'}
-Message: ${message}
-Reply helpfully and concisely in educational tone.`;
+  const prompt = `You are BridgeBot, the AI learning assistant for Future Bridge - a smart education platform for engineering students at SSBT College.
+Context: ${context || 'Student asking a question'}
+Student message: ${message}
+
+Respond helpfully, concisely and in a friendly educational tone. For technical questions provide clear explanations with examples.`;
 
   const response = await callGemini(prompt);
   res.json({ success: true, response });
