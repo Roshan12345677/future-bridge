@@ -41,84 +41,163 @@ const MarkdownContent = ({ content }) => (
 
 // ── Interview Coach ──────────────────────────────────────────────────
 const InterviewCoach = () => {
-  const [config, setConfig] = useState({ topic: 'Arrays & Strings', difficulty: 'medium', role: 'Software Developer' });
+  const [config, setConfig] = useState({
+    topic: 'Arrays & Strings',
+    difficulty: 'medium',
+    role: 'Software Developer'
+  });
   const [question, setQuestion] = useState('');
   const [userAnswer, setUserAnswer] = useState('');
   const [feedback, setFeedback] = useState('');
   const [loading, setLoading] = useState(false);
   const [step, setStep] = useState('config'); // config | answering | feedback
 
-  const generateQuestion = async () => {
+  const generateQuestion = async (currentConfig) => {
+    const cfg = currentConfig || config;
     setLoading(true);
     setFeedback('');
+    setUserAnswer('');
     try {
-      const data = await aiAPI.interview({ topic: config.topic, difficulty: config.difficulty, role: config.role });
+      const data = await aiAPI.interview({
+        topic: cfg.topic,
+        difficulty: cfg.difficulty,
+        role: cfg.role
+      });
       setQuestion(data.response);
       setStep('answering');
-      setUserAnswer('');
-    } catch (e) { toast.error('Failed to generate question'); }
-    finally { setLoading(false); }
+    } catch (e) {
+      toast.error('Failed to generate question');
+    } finally {
+      setLoading(false);
+    }
   };
 
   const submitAnswer = async () => {
     if (!userAnswer.trim()) return toast.error('Please write your answer first');
     setLoading(true);
     try {
-      const data = await aiAPI.interview({ topic: config.topic, difficulty: config.difficulty, role: config.role, userAnswer });
+      const data = await aiAPI.interview({
+        topic: config.topic,
+        difficulty: config.difficulty,
+        role: config.role,
+        userAnswer
+      });
       setFeedback(data.response);
       setStep('feedback');
-    } catch (e) { toast.error('Failed to evaluate answer'); }
-    finally { setLoading(false); }
+    } catch (e) {
+      toast.error('Failed to evaluate answer');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Generate next question directly without going back to config
+  const nextQuestion = async () => {
+    setStep('answering');
+    setQuestion('');
+    setUserAnswer('');
+    setFeedback('');
+    await generateQuestion(config);
+  };
+
+  // Reset fully to config screen
+  const resetToConfig = () => {
+    setStep('config');
+    setQuestion('');
+    setUserAnswer('');
+    setFeedback('');
   };
 
   return (
     <div className="space-y-4">
-      {/* Config */}
+      {/* Config Screen */}
       {step === 'config' && (
         <div className="card p-6 space-y-4 animate-slide-up">
-          <h3 className="font-semibold text-gray-900 dark:text-white">Configure Your Mock Interview</h3>
+          <h3 className="font-semibold text-gray-900 dark:text-white">
+            Configure Your Mock Interview
+          </h3>
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             <div>
               <label className="input-label">Topic</label>
-              <select value={config.topic} onChange={e => setConfig({ ...config, topic: e.target.value })} className="input">
+              <select
+                value={config.topic}
+                onChange={e => setConfig({ ...config, topic: e.target.value })}
+                className="input"
+              >
                 {TOPICS.map(t => <option key={t}>{t}</option>)}
               </select>
             </div>
             <div>
               <label className="input-label">Difficulty</label>
-              <select value={config.difficulty} onChange={e => setConfig({ ...config, difficulty: e.target.value })} className="input capitalize">
-                {DIFFICULTIES.map(d => <option key={d} value={d} className="capitalize">{d}</option>)}
+              <select
+                value={config.difficulty}
+                onChange={e => setConfig({ ...config, difficulty: e.target.value })}
+                className="input capitalize"
+              >
+                {DIFFICULTIES.map(d => (
+                  <option key={d} value={d} className="capitalize">{d}</option>
+                ))}
               </select>
             </div>
             <div>
               <label className="input-label">Target Role</label>
-              <select value={config.role} onChange={e => setConfig({ ...config, role: e.target.value })} className="input">
+              <select
+                value={config.role}
+                onChange={e => setConfig({ ...config, role: e.target.value })}
+                className="input"
+              >
                 {ROLES.map(r => <option key={r}>{r}</option>)}
               </select>
             </div>
           </div>
-          <button onClick={generateQuestion} disabled={loading} className="btn-primary flex items-center gap-2">
-            {loading ? <Loader2 size={16} className="animate-spin" /> : <Sparkles size={16} />}
-            Generate Interview Question
+          <button
+            onClick={() => generateQuestion(config)}
+            disabled={loading}
+            className="btn-primary flex items-center gap-2"
+          >
+            {loading
+              ? <Loader2 size={16} className="animate-spin" />
+              : <Sparkles size={16} />
+            }
+            {loading ? 'Generating Question...' : 'Generate Interview Question'}
           </button>
         </div>
       )}
 
-      {/* Question */}
+      {/* Question Screen */}
       {(step === 'answering' || step === 'feedback') && (
         <div className="card p-6 animate-slide-up">
           <div className="flex items-center justify-between mb-4">
             <div className="flex items-center gap-2">
               <span className="badge-blue">{config.topic}</span>
               <span className="badge-gray capitalize">{config.difficulty}</span>
+              <span className="badge-violet">{config.role}</span>
             </div>
-            <button onClick={() => { setStep('config'); setQuestion(''); setFeedback(''); }} className="text-xs text-blue-500 hover:text-blue-600">New Question</button>
-          </div>
-          <div className="bg-blue-50 dark:bg-blue-900/20 rounded-xl p-4 mb-4">
-            <MarkdownContent content={question} />
+            <button
+              onClick={resetToConfig}
+              className="text-xs text-gray-500 hover:text-blue-500 transition-colors"
+            >
+              ← Change Settings
+            </button>
           </div>
 
-          {step === 'answering' && (
+          {/* Loading State */}
+          {loading && !question && (
+            <div className="flex flex-col items-center justify-center py-12">
+              <Loader2 size={32} className="animate-spin text-blue-500 mb-3" />
+              <p className="text-sm text-gray-500">Generating your interview question...</p>
+            </div>
+          )}
+
+          {/* Question */}
+          {question && (
+            <div className="bg-blue-50 dark:bg-blue-900/20 rounded-xl p-4 mb-4">
+              <MarkdownContent content={question} />
+            </div>
+          )}
+
+          {/* Answer Input */}
+          {step === 'answering' && question && (
             <>
               <label className="input-label">Your Answer</label>
               <textarea
@@ -128,27 +207,71 @@ const InterviewCoach = () => {
                 rows={8}
                 className="input resize-none mb-3 font-mono text-sm"
               />
-              <button onClick={submitAnswer} disabled={loading} className="btn-primary flex items-center gap-2">
-                {loading ? <Loader2 size={16} className="animate-spin" /> : <Send size={16} />}
-                {loading ? 'Evaluating...' : 'Submit for AI Feedback'}
-              </button>
+              <div className="flex gap-3">
+                <button
+                  onClick={submitAnswer}
+                  disabled={loading}
+                  className="btn-primary flex items-center gap-2"
+                >
+                  {loading
+                    ? <Loader2 size={16} className="animate-spin" />
+                    : <Send size={16} />
+                  }
+                  {loading ? 'Evaluating...' : 'Submit for AI Feedback'}
+                </button>
+                <button
+                  onClick={nextQuestion}
+                  disabled={loading}
+                  className="btn-outline flex items-center gap-2"
+                >
+                  {loading
+                    ? <Loader2 size={16} className="animate-spin" />
+                    : <Sparkles size={16} />
+                  }
+                  Skip - Next Question
+                </button>
+              </div>
             </>
           )}
         </div>
       )}
 
-      {/* Feedback */}
+      {/* Feedback Screen */}
       {step === 'feedback' && feedback && (
         <div className="card p-6 animate-slide-up">
           <div className="flex items-center gap-2 mb-4">
             <Star size={18} className="text-amber-500 fill-amber-500" />
-            <h3 className="font-semibold text-gray-900 dark:text-white">AI Feedback</h3>
+            <h3 className="font-semibold text-gray-900 dark:text-white">
+              AI Feedback
+            </h3>
           </div>
           <MarkdownContent content={feedback} />
           <div className="flex gap-3 mt-4 pt-4 border-t border-gray-100 dark:border-gray-800">
-            <button onClick={() => { setStep('answering'); setFeedback(''); }} className="btn-outline btn-sm">Try Again</button>
-            <button onClick={generateQuestion} disabled={loading} className="btn-primary btn-sm flex items-center gap-1">
-              <Sparkles size={14} /> Next Question
+            <button
+              onClick={() => {
+                setStep('answering');
+                setFeedback('');
+              }}
+              className="btn-outline btn-sm"
+            >
+              Try Again
+            </button>
+            <button
+              onClick={nextQuestion}
+              disabled={loading}
+              className="btn-primary btn-sm flex items-center gap-1.5"
+            >
+              {loading
+                ? <Loader2 size={14} className="animate-spin" />
+                : <Sparkles size={14} />
+              }
+              {loading ? 'Generating...' : 'Next Question →'}
+            </button>
+            <button
+              onClick={resetToConfig}
+              className="btn-secondary btn-sm"
+            >
+              Change Topic
             </button>
           </div>
         </div>
